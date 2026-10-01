@@ -85,6 +85,11 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+
+# TEMPORARY: bundle packages not yet indexed in public arch-mact2 mirrors
+# TODO: remove once apple-bcm-firmware is available in arch-mact2 pacman index
+cp /builder/t2-packages/*.pkg.tar.zst "$offline_mirror_dir/"
+
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
