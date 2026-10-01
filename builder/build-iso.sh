@@ -33,6 +33,9 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
+# Remove packages from releng that aren't available on our mirrors
+sed -i '/^broadcom-wl$/d' "$build_cache_dir/packages.x86_64"
+
 # Persist OMARCHY_MIRROR so it's available at install time
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
