@@ -9,10 +9,6 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
 
-    container:
-      image: archlinux/archlinux:latest
-      options: --privileged
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -20,21 +16,16 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build ISO in Arch Linux container
-      env:
-        OMARCHY_INSTALLER_REPO: rawalrauf/omarchy
-        OMARCHY_INSTALLER_REF: main
-        OMARCHY_MIRROR: stable
-        HOST_UID: "1001"
-        HOST_GID: "1001"
+    - name: Build ISO
       run: |
+        mkdir -p release
         docker run --rm \
           --privileged \
-          -e "OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO" \
-          -e "OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF" \
-          -e "OMARCHY_MIRROR=$OMARCHY_MIRROR" \
-          -e "HOST_UID=$HOST_UID" \
-          -e "HOST_GID=$HOST_GID" \
+          -e "OMARCHY_INSTALLER_REPO=rawalrauf/omarchy" \
+          -e "OMARCHY_INSTALLER_REF=main" \
+          -e "OMARCHY_MIRROR=stable" \
+          -e "HOST_UID=$(id -u)" \
+          -e "HOST_GID=$(id -g)" \
           -v "${{ github.workspace }}:/workspace" \
           -v "${{ github.workspace }}/release:/out" \
           archlinux/archlinux:latest \
@@ -42,16 +33,10 @@ jobs:
             pacman -Sy --noconfirm archlinux-keyring &&
             pacman -Syu --noconfirm &&
             pacman -S --noconfirm git sudo jq &&
-            chmod +x /workspace/builder/build-iso.sh &&
             cp -r /workspace/builder /builder &&
             cp -r /workspace/configs /configs &&
             cp -r /workspace/archiso /archiso &&
             mkdir -p /out &&
-            OMARCHY_INSTALLER_REPO=$OMARCHY_INSTALLER_REPO \
-            OMARCHY_INSTALLER_REF=$OMARCHY_INSTALLER_REF \
-            OMARCHY_MIRROR=$OMARCHY_MIRROR \
-            HOST_UID=$HOST_UID \
-            HOST_GID=$HOST_GID \
             bash /builder/build-iso.sh
           "
 
