@@ -78,9 +78,13 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
 all_packages=($(cat "$build_cache_dir/packages.x86_64"))
+echo "DEBUG packages.x86_64 broadcom:" && grep -i broadcom "$build_cache_dir/packages.x86_64" || true
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
+echo "DEBUG base broadcom:" && grep -i broadcom "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" || true
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
+echo "DEBUG other broadcom:" && grep -i broadcom "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" || true
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
+echo "DEBUG archinstall broadcom:" && grep -i broadcom /builder/archinstall.packages || true
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
