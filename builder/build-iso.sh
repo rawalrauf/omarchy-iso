@@ -22,7 +22,7 @@ mkdir -p $build_cache_dir/
 mkdir -p $offline_mirror_dir/
 
 # We base our ISO on the official arch ISO (releng) config
-cp -r /archiso/configs/releng/* $build_cache_dir/
+cp -r /usr/share/archiso/configs/releng/* $build_cache_dir/
 rm "$build_cache_dir/airootfs/etc/motd"
 
 # Avoid using reflector for mirror identification as we are relying on the global CDN
