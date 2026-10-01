@@ -86,8 +86,12 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 
-# TEMPORARY: bundle packages not yet indexed in public arch-mact2 mirrors
-# TODO: remove once apple-bcm-firmware is available in arch-mact2 pacman index
+# TEMPORARY: apple-bcm-firmware is not yet indexed in the arch-mact2 pacman db
+# so we bundle it manually from builder/t2-packages/.
+# To remove this fix once it's properly indexed:
+#   1. Delete builder/t2-packages/apple-bcm-firmware-*.pkg.tar.zst
+#   2. Delete this cp line (and the directory if empty)
+#   3. Verify with: curl -s https://github.com/NoaHimesaka1873/arch-mact2-mirror/releases/download/release/arch-mact2.db | zstd -d | tar -t | grep apple-bcm-firmware
 cp /builder/t2-packages/*.pkg.tar.zst "$offline_mirror_dir/"
 
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
