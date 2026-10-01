@@ -1,70 +1,264 @@
 #!/usr/bin/env bash
-#
-# Live ISO entry point on tty1: set up the live VT, run the configurator
-# wizard, then hand off to the Python install orchestrator. Mirrors the
-# stream/env contract from the previously-working installer:
-#   - stdout teed to /var/log/omarchy-install.log (CSI-stripped) AND to tty
-#   - stderr direct to /dev/tty so gum (which draws its TUI on stderr)
-#     renders correctly
-#   - CLICOLOR_FORCE/FORCE_COLOR so gum emits ANSI even with stdout piped
-#   - COLUMNS/LINES so gum picks up real terminal size
 set -euo pipefail
 
-[[ $(tty) == /dev/tty1 ]] || exit 0
-
-export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
-export OMARCHY_PATH=/usr/share/omarchy
-export OMARCHY_INSTALL=$OMARCHY_PATH/install
-export OMARCHY_INSTALL_LOG_FILE=/var/log/omarchy-install.log
-if [[ -f /usr/share/omarchy-iso/install-debug ]]; then
-  export OMARCHY_INSTALL_DEBUG=1
-fi
-source "$OMARCHY_INSTALL/helpers/all.sh"
-
-# Tokyo Night palette so the live VT matches the installed look.
-set_tokyo_night_colors() {
-  echo -en "\e]P01a1b26"; echo -en "\e]P1f7768e"; echo -en "\e]P29ece6a"
-  echo -en "\e]P3e0af68"; echo -en "\e]P47aa2f7"; echo -en "\e]P5bb9af7"
-  echo -en "\e]P67dcfff"; echo -en "\e]P7a9b1d6"; echo -en "\e]P8414868"
-  echo -en "\e]P9f7768e"; echo -en "\e]PA9ece6a"; echo -en "\e]PBe0af68"
-  echo -en "\e]PC7aa2f7"; echo -en "\e]PDbb9af7"; echo -en "\e]PE7dcfff"
-  echo -en "\e]PFc0caf5"
-  echo -en "\033[0m"
-  clear
+use_omarchy_helpers() {
+  export OMARCHY_PATH="/root/omarchy"
+  export OMARCHY_INSTALL="/root/omarchy/install"
+  export OMARCHY_INSTALL_LOG_FILE="/var/log/omarchy-install.log"
+  export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
+  source /root/omarchy/install/helpers/all.sh
 }
-set_tokyo_night_colors
 
-mkdir -p /var/log
-touch "$OMARCHY_INSTALL_LOG_FILE"
+run_configurator() {
+  set_tokyo_night_colors
+  ./configurator
+  export OMARCHY_USER="$(jq -r '.users[0].username' user_credentials.json)"
+}
 
-export COLUMNS=$(tput cols)
-export LINES=$(tput lines)
-exec > >(tee >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$OMARCHY_INSTALL_LOG_FILE") 2>/dev/null) 2>/dev/tty
-export CLICOLOR_FORCE=1
-export FORCE_COLOR=1
+install_arch() {
+  clear_logo
+  gum style --foreground 3 --padding "1 0 0 $PADDING_LEFT" "Installing..."
+  echo
 
-if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
-  echo "=== Omarchy ISO debug build ==="
-  [[ -f /usr/share/omarchy-iso/build-info ]] && cat /usr/share/omarchy-iso/build-info
-  pacman -Q omarchy-installer omarchy-settings omarchy-keyring 2>/dev/null || true
-  echo "================================"
+  touch /var/log/omarchy-install.log
+
+  start_log_output
+
+  # Set CURRENT_SCRIPT for the trap to display better when nothing is returned for some reason
+  CURRENT_SCRIPT="install_base_system"
+  install_base_system > >(sed -u 's/\x1b\[[0-9;]*[a-zA-Z]//g' >>/var/log/omarchy-install.log) 2>&1
+  unset CURRENT_SCRIPT
+  stop_log_output
+}
+
+install_omarchy() {
+  chroot_bash -lc "sudo pacman -S --noconfirm --needed gum" >/dev/null
+  chroot_bash -lc "source /home/$OMARCHY_USER/.local/share/omarchy/install.sh"
+
+  configure_login_for_unencrypted_install
+
+  # Reboot if requested by installer
+  if [[ -f /mnt/var/tmp/omarchy-install-completed ]]; then
+    reboot
+  fi
+}
+
+# Set Tokyo Night color scheme for the terminal
+set_tokyo_night_colors() {
+  if [[ $(tty) == "/dev/tty"* ]]; then
+    # Tokyo Night color palette
+    echo -en "\e]P01a1b26" # black (background)
+    echo -en "\e]P1f7768e" # red
+    echo -en "\e]P29ece6a" # green
+    echo -en "\e]P3e0af68" # yellow
+    echo -en "\e]P47aa2f7" # blue
+    echo -en "\e]P5bb9af7" # magenta
+    echo -en "\e]P67dcfff" # cyan
+    echo -en "\e]P7a9b1d6" # white
+    echo -en "\e]P8414868" # bright black
+    echo -en "\e]P9f7768e" # bright red
+    echo -en "\e]PA9ece6a" # bright green
+    echo -en "\e]PBe0af68" # bright yellow
+    echo -en "\e]PC7aa2f7" # bright blue
+    echo -en "\e]PDbb9af7" # bright magenta
+    echo -en "\e]PE7dcfff" # bright cyan
+    echo -en "\e]PFc0caf5" # bright white (foreground)
+
+    # Set default foreground and background
+    echo -en "\033[0m"
+    clear
+  fi
+}
+
+install_disk() {
+  jq -er 'first(.disk_config.device_modifications[]? | select(.wipe == true) | .device)' user_configuration.json
+}
+
+cleanup_install_disk() {
+  local disk="$1"
+
+  if [[ -z "$disk" || ! -b "$disk" ]]; then
+    echo "Could not determine install disk for cleanup" >&2
+    return 1
+  fi
+
+  echo "Cleaning up existing holders on install disk: $disk"
+
+  # Ensure that no mounts exist from past install attempts.
+  findmnt -R /mnt >/dev/null && umount -R /mnt || true
+
+  # Turn off swap and unmount anything backed by the selected disk, including
+  # device-mapper children from a previous install. Active LVM/swap holders can
+  # prevent the kernel from re-reading the partition table after archinstall
+  # wipes and recreates it.
+  while read -r dev; do
+    [[ -b "$dev" ]] || continue
+
+    swapoff "$dev" 2>/dev/null || true
+
+    while read -r target; do
+      [[ -n "$target" ]] || continue
+      umount "$target" 2>/dev/null || true
+    done < <(findmnt -rn -S "$dev" -o TARGET 2>/dev/null || true)
+  done < <(lsblk -rnpo PATH "$disk")
+
+  # Deactivate any LVM volume groups whose physical volumes live on the selected
+  # disk. This is the common case when replacing Fedora/Alma/RHEL installs.
+  while read -r dev type; do
+    [[ "$type" == "disk" || "$type" == "part" || "$type" == "crypt" ]] || continue
+
+    while read -r vg; do
+      [[ -n "$vg" ]] || continue
+      vgchange -an "$vg" 2>/dev/null || true
+    done < <(pvs --noheadings -o vg_name "$dev" 2>/dev/null | awk '{$1=$1; print}' | sort -u)
+  done < <(lsblk -rnpo PATH,TYPE "$disk")
+
+  # Close any LUKS mappings stacked on the selected disk after filesystems and
+  # swap have been released.
+  while read -r dev type; do
+    [[ "$type" == "crypt" ]] || continue
+    cryptsetup close "$dev" 2>/dev/null || true
+  done < <(lsblk -rnpo PATH,TYPE "$disk")
+
+  blockdev --flushbufs "$disk" 2>/dev/null || true
+  partprobe "$disk" 2>/dev/null || true
+  udevadm settle || true
+}
+
+install_base_system() {
+  # Initialize and populate the keyring
+  pacman-key --init
+  pacman-key --populate archlinux
+  pacman-key --populate omarchy
+
+  # Sync the offline database so pacman can find packages
+  pacman -Sy --noconfirm
+
+  cleanup_install_disk "$(install_disk)"
+
+  # Workarounds for archinstall 4.2 regressions under Python 3.14:
+  # 1. sync_log_to_install_medium: `self.target / absolute_logfile` drops
+  #    self.target because the RHS is absolute, so Path.copy() raises EINVAL
+  #    (source == target).
+  # 2. _add_limine_bootloader: `Path.copy(efi_dir_path)` raises IsADirectoryError
+  #    because 3.14's Path.copy treats target as a literal path, not a directory
+  #    (shutil.copy used to auto-append the source filename).
+  sed -i \
+    -e 's|logfile_target = self\.target / absolute_logfile$|logfile_target = self.target / absolute_logfile.relative_to("/")|' \
+    -e 's|(limine_path / file)\.copy(efi_dir_path)|(limine_path / file).copy(efi_dir_path / file)|' \
+    -e "s|(limine_path / 'limine-bios.sys')\.copy(boot_limine_path)|(limine_path / 'limine-bios.sys').copy(boot_limine_path / 'limine-bios.sys')|" \
+    /usr/lib/python3.14/site-packages/archinstall/lib/installer.py
+
+  # Install using files generated by the ./configurator
+  # Skip NTP and WKD sync since we're offline (keyring is pre-populated in ISO)
+  archinstall \
+    --config user_configuration.json \
+    --creds user_credentials.json \
+    --silent \
+    --skip-ntp \
+    --skip-wkd \
+    --skip-wifi-check
+
+  # Archinstall unmounts the ESP when it finishes. Omarchy's boot finalizer
+  # needs the generated Limine config and EFI artifacts available under /boot.
+  if ! mountpoint -q /mnt/boot; then
+    arch-chroot /mnt mount /boot
+  fi
+
+  # The installed fstab keeps the ESP root-only, but Omarchy finalization runs
+  # as the target user and must discover the Limine config before using sudo to
+  # replace it. Temporarily allow reads and directory traversal during install.
+  boot_device=$(findmnt -nro SOURCE --target /mnt/boot)
+  umount /mnt/boot
+  mount -t vfat -o rw,fmask=0022,dmask=0022 "$boot_device" /mnt/boot
+
+  if ! arch-chroot -u "$OMARCHY_USER" /mnt test -x /boot; then
+    echo "Target user cannot access the mounted ESP" >&2
+    return 1
+  fi
+
+  # After archinstall sets up the base system but before our installer runs,
+  # we need to ensure the offline pacman.conf is in place
+  cp /etc/pacman.conf /mnt/etc/pacman.conf
+
+  # Mount the offline mirror so it's accessible in the chroot
+  mkdir -p /mnt/var/cache/omarchy/mirror/offline
+  mount --bind /var/cache/omarchy/mirror/offline /mnt/var/cache/omarchy/mirror/offline
+
+  # Mount the packages dir so it's accessible in the chroot
+  mkdir -p /mnt/opt/packages
+  mount --bind /opt/packages /mnt/opt/packages
+
+  # No need to ask for sudo during the installation (omarchy itself responsible for removing after install)
+  mkdir -p /mnt/etc/sudoers.d
+  cat >/mnt/etc/sudoers.d/99-omarchy-installer <<EOF
+root ALL=(ALL:ALL) NOPASSWD: ALL
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+$OMARCHY_USER ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+  chmod 440 /mnt/etc/sudoers.d/99-omarchy-installer
+
+  # Copy the local omarchy repo to the user's home directory
+  mkdir -p /mnt/home/$OMARCHY_USER/.local/share/
+  cp -r /root/omarchy /mnt/home/$OMARCHY_USER/.local/share/
+
+  chown -R 1000:1000 /mnt/home/$OMARCHY_USER/.local/
+
+  # Ensure all necessary scripts are executable
+  find /mnt/home/$OMARCHY_USER/.local/share/omarchy -type f -path "*/bin/*" -exec chmod +x {} \;
+  chmod +x /mnt/home/$OMARCHY_USER/.local/share/omarchy/boot.sh 2>/dev/null || true
+  find /mnt/home/$OMARCHY_USER/.local/share/omarchy/default/waybar -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+}
+
+configure_login_for_unencrypted_install() {
+  if [[ $(<user_encrypt_installation.txt) != "false" ]]; then
+    return
+  fi
+
+  # Unencrypted installs must stop at SDDM so the user password is entered
+  # before reaching the desktop. Omarchy's normal encrypted path may autologin
+  # because the disk password was already entered at boot.
+  #
+  # Keep the Omarchy SDDM theme and seed SDDM's last user/session state so
+  # first boot looks like the SDDM screen shown after logging out of Omarchy.
+  mkdir -p /mnt/etc/sddm.conf.d
+  rm -f /mnt/etc/sddm.conf.d/autologin.conf
+  cat >/mnt/etc/sddm.conf.d/99-omarchy-login.conf <<EOF
+[Theme]
+Current=omarchy
+
+[Users]
+RememberLastUser=true
+RememberLastSession=true
+EOF
+
+  mkdir -p /mnt/var/lib/sddm
+  cat >/mnt/var/lib/sddm/state.conf <<EOF
+[Last]
+Session=omarchy.desktop
+User=$OMARCHY_USER
+EOF
+
+  rm -f /mnt/etc/systemd/system/getty@tty1.service.d/autologin.conf
+  arch-chroot /mnt chown sddm:sddm /var/lib/sddm /var/lib/sddm/state.conf >/dev/null 2>&1 || true
+  arch-chroot /mnt systemctl enable sddm.service >/dev/null 2>&1 || true
+}
+
+chroot_bash() {
+  HOME=/home/$OMARCHY_USER \
+    arch-chroot -u $OMARCHY_USER /mnt/ \
+    env OMARCHY_CHROOT_INSTALL=1 \
+    OMARCHY_USER_NAME="$(<user_full_name.txt)" \
+    OMARCHY_USER_EMAIL="$(<user_email_address.txt)" \
+    OMARCHY_MIRROR="$OMARCHY_MIRROR" \
+    USER="$OMARCHY_USER" \
+    HOME="/home/$OMARCHY_USER" \
+    /bin/bash "$@"
+}
+
+if [[ $(tty) == "/dev/tty1" ]]; then
+  use_omarchy_helpers
+  run_configurator
+  install_arch
+  install_omarchy
 fi
-
-cd /root
-./configurator
-
-# The foreground dashboard is now the sole visible install UI owner. It starts
-# the actual installer as a non-interactive child, logs child output, waits for
-# completion, then renders the final installed-time/reboot prompt itself.
-export OMARCHY_DASHBOARD_TTY="$(tty)"
-rm -f /run/omarchy-install/state.json
-/usr/local/bin/omarchy-install-dashboard \
-  "$OMARCHY_INSTALL_LOG_FILE" \
-  /run/omarchy-install/state.json \
-  -- \
-  /usr/local/bin/omarchy-iso-install \
-    --config /root/user_configuration.json \
-    --creds /root/user_credentials.json \
-    --full-name-file /root/user_full_name.txt \
-    --email-file /root/user_email_address.txt \
-    --encrypt-file /root/user_encrypt_installation.txt
