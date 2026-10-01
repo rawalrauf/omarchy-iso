@@ -33,9 +33,6 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 
-# Remove packages from releng that aren't available on our mirrors
-sed -i '/^broadcom-wl$/d' "$build_cache_dir/packages.x86_64"
-
 # Persist OMARCHY_MIRROR so it's available at install time
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
@@ -81,19 +78,12 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
 all_packages=($(cat "$build_cache_dir/packages.x86_64"))
-echo "DEBUG packages.x86_64 broadcom:" && grep -i broadcom "$build_cache_dir/packages.x86_64" || true
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" | grep -v '^$'))
-echo "DEBUG base broadcom:" && grep -i broadcom "$build_cache_dir/airootfs/root/omarchy/install/omarchy-base.packages" || true
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
-echo "DEBUG other broadcom:" && grep -i broadcom "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" || true
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
-echo "DEBUG archinstall broadcom:" && grep -i broadcom /builder/archinstall.packages || true
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy --dbpath /tmp/offlinedb
-# Debug: show which packages contain broadcom or apple-bcm
-printf '%s\n' "${all_packages[@]}" | grep -i "broadcom\|apple-bcm" || echo "DEBUG: no broadcom/apple-bcm in package list"
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
