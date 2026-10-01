@@ -100,6 +100,7 @@ else
   # Pull the same package lists out of the freshly-downloaded omarchy package
   # so we don't need a local checkout in the non-local-source path.
   mkdir -p /tmp/offlinedb-bootstrap
+  pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy --dbpath /tmp/offlinedb-bootstrap >/dev/null
   pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sw omarchy --cachedir /tmp --dbpath /tmp/offlinedb-bootstrap >/dev/null
   omarchy_pkg=$(ls /tmp/omarchy-*.pkg.tar.zst | head -1)
   mkdir -p /tmp/omarchy-pkglists
