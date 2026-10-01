@@ -40,7 +40,7 @@ jobs:
             cp -r /workspace/archiso /archiso &&
             mkdir -p /out &&
             bash /builder/build-iso.sh
-          "
+          " 2>&1 | tee /tmp/build.log; status=${PIPESTATUS[0]}; grep -i 'broadcom\|apple-bcm\|target not found\|error:' /tmp/build.log | head -20; exit $status
 
     - name: Upload ISO artifact
       uses: actions/upload-artifact@v4
