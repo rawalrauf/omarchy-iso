@@ -85,6 +85,8 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy --dbpath /tmp/offlinedb
+# Debug: show which packages contain broadcom or apple-bcm
+printf '%s\n' "${all_packages[@]}" | grep -i "broadcom\|apple-bcm" || echo "DEBUG: no broadcom/apple-bcm in package list"
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
