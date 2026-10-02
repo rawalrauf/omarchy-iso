@@ -82,16 +82,18 @@ all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/om
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/omarchy/install/omarchy-other.packages" | grep -v '^$'))
 all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
+# TEMPORARY: apple-bcm-firmware is not yet indexed in the arch-mact2 pacman db
+# so we bundle it manually from builder/t2-packages/ and exclude it from pacman download.
+# To remove this fix once it's properly indexed:
+#   1. Delete builder/t2-packages/apple-bcm-firmware-*.pkg.tar.zst
+#   2. Remove this exclusion and the cp line below
+#   3. Verify with: curl -s https://github.com/NoaHimesaka1873/arch-mact2-mirror/releases/download/release/arch-mact2.db | zstd -d | tar -t | grep apple-bcm-firmware
+all_packages=($(printf '%s\n' "${all_packages[@]}" | grep -v '^apple-bcm-firmware$'))
+
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 
-# TEMPORARY: apple-bcm-firmware is not yet indexed in the arch-mact2 pacman db
-# so we bundle it manually from builder/t2-packages/.
-# To remove this fix once it's properly indexed:
-#   1. Delete builder/t2-packages/apple-bcm-firmware-*.pkg.tar.zst
-#   2. Delete this cp line (and the directory if empty)
-#   3. Verify with: curl -s https://github.com/NoaHimesaka1873/arch-mact2-mirror/releases/download/release/arch-mact2.db | zstd -d | tar -t | grep apple-bcm-firmware
 cp /builder/t2-packages/*.pkg.tar.zst "$offline_mirror_dir/"
 
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
